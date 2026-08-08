@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>LethalFantasyMapScaler</AssemblyName>
+    <RootNamespace>LethalFantasyMapScaler</RootNamespace>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <LangVersion>9</LangVersion>
+  </PropertyGroup>
+
+  <!-- BepInEx + Harmony via NuGet -->
+  <ItemGroup Label="BepInEx">
+    <PackageReference Include="BepInEx.Core" Version="5.4.21" />
+  </ItemGroup>
+
+  <!--
+    Game DLL references. Set GameDir in Directory.Build.props (copy from
+    Directory.Build.props.example and fill in your installation path).
+  -->
+  <ItemGroup Label="Unity">
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.AIModule">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\UnityEngine.AIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.AI.Navigation">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\Unity.AI.Navigation.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Label="Game">
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameDir)\LethalFantasy_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Auto-deploy built DLL to BepInEx plugins folder if the game is present -->
+  <Target Name="DeployToBepInEx" AfterTargets="Build" Condition="Exists('$(GameDir)\BepInEx\plugins')">
+    <Copy
+      SourceFiles="$(TargetPath)"
+      DestinationFolder="$(GameDir)\BepInEx\plugins"
+      SkipUnchangedFiles="true" />
+    <Message Text="[MapScaler] Deployed to $(GameDir)\BepInEx\plugins\" Importance="high" />
+  </Target>
+
+</Project>

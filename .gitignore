@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+
+# MSBuild local override — contains your machine-specific game path.
+# Copy Directory.Build.props.example to Directory.Build.props and fill it in.
+Directory.Build.props
+
+# Scratch / backup files
+*.Backup.tmp
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db

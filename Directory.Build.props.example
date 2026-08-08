@@ -1,0 +1,13 @@
+<!--
+  Copy this file to Directory.Build.props (same folder) and set GameDir to your
+  Lethal Fantasy Beta installation directory. Directory.Build.props is gitignored
+  so your local path never ends up in the repository.
+
+  Example (Windows):
+    <GameDir>C:\Games\Lethal Fantasy Beta v0.1.3</GameDir>
+-->
+<Project>
+  <PropertyGroup>
+    <GameDir>C:\Path\To\Lethal Fantasy Beta v0.1.3</GameDir>
+  </PropertyGroup>
+</Project>
