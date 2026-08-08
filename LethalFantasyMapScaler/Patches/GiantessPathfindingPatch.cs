@@ -30,7 +30,7 @@ namespace LethalFantasyMapScaler.Patches
     {
         static bool Prefix(GiantessPathfinding __instance, ref IEnumerator __result)
         {
-            if (!MapScalerConfig.EnableOptimizations.Value) return true;
+            if (!MapScalerConfig.EnableGiantessPathfinding.Value) return true;
             __result = FastSetup(__instance);
             return false;
         }

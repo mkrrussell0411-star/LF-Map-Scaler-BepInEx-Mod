@@ -27,7 +27,7 @@ namespace LethalFantasyMapScaler.Patches
 
             if (stateMachine == null)
             {
-                Plugin.Log.LogWarning("[MapScaler] Could not find MapVisibility.CreateMap state machine — PIP ray NOT scaled.");
+                Plugin.Log.LogWarning("[MapScaler] Could not find MapVisibility.CreateMap state machine — PIP ray patch skipped.");
                 return null;
             }
 
@@ -39,6 +39,14 @@ namespace LethalFantasyMapScaler.Patches
 
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
+            // Check config in the transpiler body — never return null from TargetMethod
+            // to disable a patch; Harmony 2.x treats null as an error, not a skip.
+            if (!MapScalerConfig.EnableMapVisibilityRayScale.Value)
+            {
+                foreach (var instr in instructions) yield return instr;
+                yield break;
+            }
+
             MethodInfo getter = AccessTools.Method(typeof(MapVisibilityRayPatch), nameof(GetScaledRayLength));
             bool patched = false;
 
@@ -105,7 +113,7 @@ namespace LethalFantasyMapScaler.Patches
     {
         static void Prefix(ref float cellSize)
         {
-            if (!MapScalerConfig.EnableOptimizations.Value) return;
+            if (!MapScalerConfig.EnableOOBGridScaling.Value) return;
             float mult = MapScalerConfig.MapSizeMultiplier.Value;
             float scaled = cellSize * mult;
             Plugin.Log.LogDebug($"[MapScaler] OOB grid cellSize: {cellSize} → {scaled:F1} (×{mult})");

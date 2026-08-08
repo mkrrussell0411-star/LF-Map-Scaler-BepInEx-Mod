@@ -26,7 +26,7 @@ namespace LethalFantasyMapScaler.Patches
         static void Prefix(GrassRenderer __instance, out float __state)
         {
             __state = __instance.spawnCountPerMeter;
-            if (!MapScalerConfig.EnableOptimizations.Value) return;
+            if (!MapScalerConfig.EnableGrassReduction.Value) return;
             float density = MapScalerConfig.GrassDensity.Value;
             __instance.spawnCountPerMeter *= density;
             if (density < 1f)
@@ -41,7 +41,7 @@ namespace LethalFantasyMapScaler.Patches
 
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
-            if (!MapScalerConfig.EnableOptimizations.Value)
+            if (!MapScalerConfig.EnableGrassReduction.Value)
             {
                 foreach (var instr in instructions) yield return instr;
                 yield break;

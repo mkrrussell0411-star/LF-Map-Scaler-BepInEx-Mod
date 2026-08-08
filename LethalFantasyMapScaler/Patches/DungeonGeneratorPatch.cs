@@ -17,8 +17,12 @@ namespace LethalFantasyMapScaler.Patches
         static void Prefix(DungeonGenerator __instance)
         {
             float mult = MapScalerConfig.MapSizeMultiplier.Value;
-            __instance.LengthMultiplier = mult;
-            __instance.MaxAttemptCount  = MapScalerConfig.MaxGenerationAttempts.Value;
+
+            if (MapScalerConfig.EnableLengthScaling.Value)
+                __instance.LengthMultiplier = mult;
+
+            if (MapScalerConfig.EnableMaxAttemptsOverride.Value)
+                __instance.MaxAttemptCount = MapScalerConfig.MaxGenerationAttempts.Value;
 
             // Scale TilePlacementBounds proportionally to the dungeon size so the
             // larger dungeon fits within a proportionally larger spatial region.
@@ -30,8 +34,11 @@ namespace LethalFantasyMapScaler.Patches
             if (!s_originalBounds.ContainsKey(__instance))
                 s_originalBounds[__instance] = (__instance.RestrictDungeonToBounds, __instance.TilePlacementBounds);
 
-            Bounds origBounds = s_originalBounds[__instance].bounds;
-            __instance.TilePlacementBounds = new Bounds(origBounds.center, origBounds.size * mult);
+            if (MapScalerConfig.EnableTilePlacementBoundsScaling.Value)
+            {
+                Bounds origBounds = s_originalBounds[__instance].bounds;
+                __instance.TilePlacementBounds = new Bounds(origBounds.center, origBounds.size * mult);
+            }
 
             Plugin.Log.LogDebug(
                 $"[MapScaler] LengthMultiplier={__instance.LengthMultiplier}, " +
@@ -39,9 +46,10 @@ namespace LethalFantasyMapScaler.Patches
                 $"RestrictToBounds={__instance.RestrictDungeonToBounds}, " +
                 $"PlacementBounds={__instance.TilePlacementBounds.size} (×{mult})");
 
-            float branchMult = MapScalerConfig.BranchMultiplier.Value;
+            if (!MapScalerConfig.EnableBranchScaling.Value) return;
             if (__instance.DungeonFlow == null) return;
 
+            float branchMult = MapScalerConfig.BranchMultiplier.Value;
             DungeonArchetype[] archetypes = __instance.DungeonFlow.GetUsedArchetypes();
             foreach (DungeonArchetype arch in archetypes)
             {

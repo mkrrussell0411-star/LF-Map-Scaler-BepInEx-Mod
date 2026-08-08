@@ -41,6 +41,8 @@ namespace LethalFantasyMapScaler
 
         private static void ApplyFrameBudget()
         {
+            if (!MapScalerConfig.EnableFrameBudgetOverride.Value) return;
+
             int budget = MapScalerConfig.LoadingFrameBudgetMs.Value;
             if (budget == 0)
                 budget = int.MaxValue; // 0 = no limit, run coroutines flat-out

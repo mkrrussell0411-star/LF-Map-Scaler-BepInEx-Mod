@@ -21,6 +21,7 @@ namespace LethalFantasyMapScaler.Patches
     {
         static bool Prefix(NavMeshBakeOnDungeonFinish __instance)
         {
+            if (!MapScalerConfig.EnableNavMeshAsync.Value) return true;
             __instance.StartCoroutine(AsyncBake(__instance.navMeshSurface));
             return false; // skip the synchronous BuildNavMesh()
         }

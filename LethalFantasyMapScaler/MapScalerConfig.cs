@@ -37,12 +37,56 @@ namespace LethalFantasyMapScaler
         // on large maps. Set to 0 to disable the optimisation (vanilla behaviour).
         public static ConfigEntry<float> VisibilityMaxDistance { get; private set; }
 
-        // When true, enables performance optimizations: O(N²) pathfinding on a
-        // background thread, loot deferral, grass density scaling, and OOB grid
-        // scaling. WARNING: enabling this has been observed to conflict with HLOD
-        // rendering and cause dungeon tiles to be invisible at ground level.
-        // Leave disabled unless the loading time is unacceptable.
-        public static ConfigEntry<bool> EnableOptimizations { get; private set; }
+        // ── Dungeon generation toggles (default on) ─────────────────────────────
+
+        // Apply MapSizeMultiplier to DungeonGenerator.LengthMultiplier (main path length).
+        public static ConfigEntry<bool> EnableLengthScaling { get; private set; }
+
+        // Apply BranchMultiplier to each archetype's BranchingDepth and BranchCount.
+        public static ConfigEntry<bool> EnableBranchScaling { get; private set; }
+
+        // Scale TilePlacementBounds by MapSizeMultiplier so the larger dungeon fits inside
+        // the giantess HLOD XZ region. Disabling this breaks ground-level tile rendering.
+        public static ConfigEntry<bool> EnableTilePlacementBoundsScaling { get; private set; }
+
+        // Override DungeonGenerator.MaxAttemptCount with MaxGenerationAttempts config value.
+        public static ConfigEntry<bool> EnableMaxAttemptsOverride { get; private set; }
+
+        // Override SetupStopwatch.MINIMUM_FRAME_MILLISECONDS with LoadingFrameBudgetMs.
+        public static ConfigEntry<bool> EnableFrameBudgetOverride { get; private set; }
+
+        // ── Optimization toggles (default off — may affect rendering) ──────────
+
+        // Replace O(N³) giantess pathfinding LINQ loop with O(N²) + background thread.
+        public static ConfigEntry<bool> EnableGiantessPathfinding { get; private set; }
+
+        // Defer LootZone SpawnPrefab calls out of SetupZones to spread load across frames.
+        public static ConfigEntry<bool> EnableLootZoneDefer { get; private set; }
+
+        // Scale GrassRenderer.spawnCountPerMeter by GrassDensity before the grass loop.
+        public static ConfigEntry<bool> EnableGrassReduction { get; private set; }
+
+        // Scale EmptyGridFinder OOB ground-collider cell size with the map multiplier.
+        public static ConfigEntry<bool> EnableOOBGridScaling { get; private set; }
+
+        // ── Patch toggles (default on — bug fixes / correctness) ────────────────
+
+        // Run NavMesh bake asynchronously instead of blocking the main thread.
+        public static ConfigEntry<bool> EnableNavMeshAsync { get; private set; }
+
+        // Fix DunGen InnerGenerate retry limit (Application.isEditor always false in builds)
+        // that causes StackOverflow on large maps.
+        public static ConfigEntry<bool> EnableRetryLimitFix { get; private set; }
+
+        // Cache PathPaint FindObjectsOfType scan once per session instead of per tile.
+        public static ConfigEntry<bool> EnablePathPaintCache { get; private set; }
+
+        // Scale MapVisibility PIP ray from 1000 units to match the map multiplier.
+        public static ConfigEntry<bool> EnableMapVisibilityRayScale { get; private set; }
+
+        // Re-cache KiriTile world bounds after AttachDungeonToGround so the HLOD
+        // building visibility lookup uses post-attachment positions.
+        public static ConfigEntry<bool> EnableKiriTileBoundsRefresh { get; private set; }
 
         public static void Initialize(ConfigFile cfg)
         {
@@ -107,12 +151,13 @@ namespace LethalFantasyMapScaler
                 new ConfigDescription(
                     "Fraction of the normal grass density to spawn per tile. " +
                     "1.0 = vanilla density. 0.5 = half density, ~4× faster grass placement. " +
-                    "0.25 = quarter density, ~16× faster. Lower values reduce visual coverage.",
+                    "0.25 = quarter density, ~16× faster. Lower values reduce visual coverage. " +
+                    "Only active when EnableGrassReduction = true.",
                     new AcceptableValueRange<float>(0.1f, 1.0f)
                 )
             );
 
-        VisibilityMaxDistance = cfg.Bind(
+            VisibilityMaxDistance = cfg.Bind(
                 "Performance",
                 "VisibilityMaxDistance",
                 0f,
@@ -125,14 +170,129 @@ namespace LethalFantasyMapScaler
                 )
             );
 
-            EnableOptimizations = cfg.Bind(
-                "Performance",
-                "EnableOptimizations",
+            // ── Dungeon generation toggles ──────────────────────────────────────
+
+            EnableLengthScaling = cfg.Bind(
+                "DungeonGen",
+                "EnableLengthScaling",
+                true,
+                "Apply MapSizeMultiplier to DungeonGenerator.LengthMultiplier (main path room count). " +
+                "Disable to leave LengthMultiplier at its default value."
+            );
+
+            EnableBranchScaling = cfg.Bind(
+                "DungeonGen",
+                "EnableBranchScaling",
+                true,
+                "Apply BranchMultiplier to each dungeon archetype's BranchingDepth and BranchCount. " +
+                "Disable to leave branch settings at their default values."
+            );
+
+            EnableTilePlacementBoundsScaling = cfg.Bind(
+                "DungeonGen",
+                "EnableTilePlacementBoundsScaling",
+                true,
+                "Scale TilePlacementBounds by MapSizeMultiplier so the larger dungeon fits inside " +
+                "the HLOD XZ region. Disabling this will break ground-level tile rendering at scale."
+            );
+
+            EnableMaxAttemptsOverride = cfg.Bind(
+                "DungeonGen",
+                "EnableMaxAttemptsOverride",
+                true,
+                "Override DungeonGenerator.MaxAttemptCount with the MaxGenerationAttempts config value. " +
+                "Disable to use DunGen's built-in default (20)."
+            );
+
+            EnableFrameBudgetOverride = cfg.Bind(
+                "DungeonGen",
+                "EnableFrameBudgetOverride",
+                true,
+                "Override SetupStopwatch frame budget with LoadingFrameBudgetMs. " +
+                "Disable to use the game's default 33ms budget (30fps during loading)."
+            );
+
+            // ── Optimization toggles ────────────────────────────────────────────
+
+            EnableGiantessPathfinding = cfg.Bind(
+                "Optimizations",
+                "EnableGiantessPathfinding",
                 false,
-                "Enable performance optimizations: O(N²) pathfinding on a background thread, " +
-                "deferred loot spawning, grass density scaling, and OOB ground-collider grid scaling. " +
-                "WARNING: enabling this may conflict with HLOD rendering and cause dungeon tiles " +
-                "to be invisible at ground level. Leave false for stable rendering."
+                "Replace the O(N³) giantess pathfinding LINQ loop with O(N²) + a background thread. " +
+                "Safe to enable on large maps where pathfinding setup is slow. Requires restart."
+            );
+
+            EnableLootZoneDefer = cfg.Bind(
+                "Optimizations",
+                "EnableLootZoneDefer",
+                false,
+                "Spread LootZone SpawnPrefab calls across multiple frames instead of executing " +
+                "all in one frame inside SetupZones. Reduces hitching during loot setup."
+            );
+
+            EnableGrassReduction = cfg.Bind(
+                "Optimizations",
+                "EnableGrassReduction",
+                false,
+                "Scale GrassRenderer.spawnCountPerMeter by GrassDensity before the grass loop runs. " +
+                "Reduces grass spawn iterations quadratically. Visual impact scales with the reduction."
+            );
+
+            EnableOOBGridScaling = cfg.Bind(
+                "Optimizations",
+                "EnableOOBGridScaling",
+                false,
+                "Scale the EmptyGridFinder OOB ground-collider cell size by MapSizeMultiplier so " +
+                "the number of OOB collider cells stays constant regardless of map scale."
+            );
+
+            // ── Patch toggles ───────────────────────────────────────────────────
+
+            EnableNavMeshAsync = cfg.Bind(
+                "Patches",
+                "EnableNavMeshAsync",
+                true,
+                "Run the NavMesh bake asynchronously on a worker thread instead of blocking " +
+                "the main thread. Disable to use the vanilla synchronous BuildNavMesh()."
+            );
+
+            EnableRetryLimitFix = cfg.Bind(
+                "Patches",
+                "EnableRetryLimitFix",
+                true,
+                "Fix DunGen InnerGenerate retry limit: the vanilla guard is ' && Application.isEditor' " +
+                "which never fires in a build, causing StackOverflow on large maps. Replaces the " +
+                "check with a constant true so the retry limit works correctly. Requires restart."
+            );
+
+            EnablePathPaintCache = cfg.Bind(
+                "Patches",
+                "EnablePathPaintCache",
+                true,
+                "Cache the PathPaint FindObjectsOfType scan once per PaintTerrain session instead " +
+                "of repeating it for every tile. Eliminates O(N_scene × N_tiles) overhead. Requires restart."
+            );
+
+            EnableMapVisibilityRayScale = cfg.Bind(
+                "Patches",
+                "EnableMapVisibilityRayScale",
+                false,
+                "Scale the MapVisibility point-in-polygon ray from 1000 units to " +
+                "1000 × MapSizeMultiplier × 1.2. WARNING: the 1000f constant is calibrated to " +
+                "the doorway-segment polygon geometry. Scaling it causes the ray to exit and " +
+                "re-enter concave sections of the visibility polygon, producing even crossing " +
+                "counts that mark visible tiles as not visible, hiding their buildings. Only " +
+                "enable for MapSizeMultiplier values large enough that 1000 units no longer " +
+                "exits the polygon (typically > 3× or 4×)."
+            );
+
+            EnableKiriTileBoundsRefresh = cfg.Bind(
+                "Patches",
+                "EnableKiriTileBoundsRefresh",
+                true,
+                "Re-cache KiriTile world bounds after AttachDungeonToGround moves tiles to their " +
+                "final terrain positions. Fixes buildings that are invisible but still have collision " +
+                "because the HLOD quadtree used stale pre-attachment positions. Requires restart."
             );
         }
     }

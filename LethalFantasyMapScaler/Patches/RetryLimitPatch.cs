@@ -48,6 +48,12 @@ namespace LethalFantasyMapScaler.Patches
 
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
+            if (!MapScalerConfig.EnableRetryLimitFix.Value)
+            {
+                foreach (var i in instructions) yield return i;
+                yield break;
+            }
+
             MethodInfo isEditorGetter = typeof(UnityEngine.Application)
                 .GetProperty("isEditor", BindingFlags.Public | BindingFlags.Static)
                 ?.GetGetMethod();
@@ -84,8 +90,6 @@ namespace LethalFantasyMapScaler.Patches
         }
     }
 
-    // Also patch GenerateBranchPaths if it has the same guard.
-    // (Verify: search for the same pattern in its state machine.)
     [HarmonyPatch]
     internal static class BranchGenerateRetryLimitPatch
     {
@@ -102,6 +106,12 @@ namespace LethalFantasyMapScaler.Patches
 
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
+            if (!MapScalerConfig.EnableRetryLimitFix.Value)
+            {
+                foreach (var i in instructions) yield return i;
+                yield break;
+            }
+
             MethodInfo isEditorGetter = typeof(UnityEngine.Application)
                 .GetProperty("isEditor", BindingFlags.Public | BindingFlags.Static)
                 ?.GetGetMethod();

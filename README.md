@@ -34,16 +34,53 @@ A [BepInEx 5](https://github.com/BepInEx/BepInEx) mod for **Lethal Fantasy Beta 
 
 Edit `BepInEx\config\com.author.lethalfantasymapscaler.cfg` while the game is closed, or use a BepInEx config manager mod in-game.
 
+### `[Map]`
+
 | Key | Default | Range | Description |
 |---|---|---|---|
 | `MapSizeMultiplier` | `1.5` | 0.25 – 10 | Multiplier for the main dungeon path length. `1.0` = default game size. |
 | `BranchMultiplier` | `1.0` | 0.25 – 5 | Multiplier for branch depth and branch count on each dungeon archetype. |
 | `ScaleWorldBoundary` | `true` | — | Scale the out-of-bounds terrain boundary with the map. Disable if you see terrain issues. |
+
+### `[Performance]`
+
+| Key | Default | Range | Description |
+|---|---|---|---|
 | `LoadingFrameBudgetMs` | `500` | 0 – 10000 | Milliseconds each setup coroutine may run per frame. Higher = faster load, more hitching. `0` = no limit. |
 | `MaxGenerationAttempts` | `40` | 5 – 200 | Room placement retries before DunGen gives up. Larger maps may need more. |
-| `GrassDensity` | `1.0` | 0.1 – 1.0 | Fraction of grass spawns per tile. `0.5` = 4× faster placement, `0.25` = 16× faster. |
-| `VisibilityMaxDistance` | `0` | 0 – 5000 | Skip tile-pair visibility checks beyond this distance (Unity units). `0` = check all pairs. |
-| `EnableOptimizations` | `false` | — | Enables optional load-time speed-ups (pathfinding, loot deferral, grass scaling, OOB grid). **WARNING: may conflict with HLOD rendering. Leave false for stable rendering.** |
+| `GrassDensity` | `1.0` | 0.1 – 1.0 | Fraction of grass spawns per tile. Only active when `EnableGrassReduction = true`. |
+| `VisibilityMaxDistance` | `0` | 0 – 5000 | Skip tile-pair visibility checks beyond this distance. `0` = check all pairs (vanilla). |
+
+### `[DungeonGen]` — individual dungeon generation toggles (default on)
+
+| Key | Default | Description |
+|---|---|---|
+| `EnableLengthScaling` | `true` | Apply `MapSizeMultiplier` to `DungeonGenerator.LengthMultiplier`. |
+| `EnableBranchScaling` | `true` | Apply `BranchMultiplier` to each archetype's branch depth and count. |
+| `EnableTilePlacementBoundsScaling` | `true` | Scale `TilePlacementBounds` by `MapSizeMultiplier`. **Disabling this breaks ground-level tile rendering at scale.** |
+| `EnableMaxAttemptsOverride` | `true` | Override `MaxAttemptCount` with `MaxGenerationAttempts`. |
+| `EnableFrameBudgetOverride` | `true` | Override `SetupStopwatch` frame budget with `LoadingFrameBudgetMs`. |
+
+### `[Optimizations]` — optional speed-ups (default off)
+
+| Key | Default | Description |
+|---|---|---|
+| `EnableGiantessPathfinding` | `false` | Replace O(N³) giantess pathfinding LINQ loop with O(N²) + background thread. |
+| `EnableLootZoneDefer` | `false` | Spread `LootZone.SpawnPrefab` calls across frames instead of one frame. |
+| `EnableGrassReduction` | `false` | Scale grass spawn density by `GrassDensity` before the grass loop. |
+| `EnableOOBGridScaling` | `false` | Scale the OOB ground-collider grid cell size with the map multiplier. |
+
+### `[Patches]` — correctness fixes (default on unless noted)
+
+| Key | Default | Description |
+|---|---|---|
+| `EnableNavMeshAsync` | `true` | Run NavMesh bake asynchronously instead of blocking the main thread. |
+| `EnableRetryLimitFix` | `true` | Fix DunGen StackOverflow on large maps (`Application.isEditor` guard never fires in builds). |
+| `EnablePathPaintCache` | `true` | Cache `FindObjectsOfType<PathPaint>` once per session instead of once per tile. |
+| `EnableKiriTileBoundsRefresh` | `true` | Re-cache KiriTile world bounds after `AttachDungeonToGround` to fix invisible buildings with collision. |
+| `EnableMapVisibilityRayScale` | `false` | Scale the visibility PIP ray length with the map multiplier. **See warning below — leave false unless buildings disappear at very large multipliers (>3–4×).** |
+
+> **`EnableMapVisibilityRayScale` warning:** The 1000-unit ray is calibrated to the doorway-segment visibility polygon. Scaling it on small-to-medium maps causes the ray to exit and re-enter concave arms of the polygon, producing even crossing counts that incorrectly mark tiles as not visible — hiding their buildings. Only enable this if buildings start disappearing at very large multipliers where the stock 1000 units is too short to exit the polygon.
 
 ---
 
@@ -68,19 +105,21 @@ Several supporting patches handle the knock-on effects of a larger dungeon: navm
 
 1. [HLOD Architecture](#hlod-architecture)
 2. [Why Dungeon Bounds Matter](#why-dungeon-bounds-matter)
-3. [Patch Reference](#patch-reference)
+3. [Building Visibility Pipeline & Known Bugs](#building-visibility-pipeline--known-bugs)
+4. [Patch Reference](#patch-reference)
    - [DungeonGeneratorPatch](#dungeongeneratorpatch)
    - [NavMeshAsyncPatch](#navmeshasyncpatch)
    - [GiantessPathfindingPatch](#gianteesspathfindingpatch)
    - [MapVisibilityPatch](#mapvisibilitypatch)
+   - [KiriTileBoundsRefreshPatch](#kiritileboundsrefreshpatch)
    - [WorldBoundaryPatch](#worldboundarypatch)
    - [GrassPatch](#grasspatch)
    - [LootZonePatch](#lootzonepatch)
    - [TerrainPainterPatch](#terrainpainterpatch)
    - [RetryLimitPatch](#retrylimitpatch)
    - [BuildingZonePatch (disabled)](#buildingzonepatch-disabled)
-4. [SetupManager Sequence](#setupmanager-sequence)
-5. [EnableOptimizations Flag](#enableoptimizations-flag)
+5. [SetupManager Sequence](#setupmanager-sequence)
+6. [Config Sections Reference](#config-sections-reference)
 
 ---
 
@@ -120,6 +159,14 @@ Each frame, for tile `i`:
 - If `(tileBitMask >> i) & 1` → call `UpdateRenders(dist)` — terrain heightmap on, buildings shown via HLOD groups
 - Otherwise → call `ClearRenders()` — terrain heightmap off (buildings are managed separately by `globalData`)
 
+Building visibility is controlled by `KiriHLODGroup.visibilityBitMask`. Each frame, `globalData` computes:
+
+```
+if ((group.visibilityBitMask & tileBitMask) != 0) → show group
+```
+
+So a building is shown when at least one of its tile-bits is currently active in `tileBitMask`. If `visibilityBitMask == 0`, the building is **never shown** regardless of the camera position — but its physics colliders remain active, producing "invisible buildings with collision."
+
 ---
 
 ### Why Dungeon Bounds Matter
@@ -139,18 +186,48 @@ The original bounds (and the `RestrictDungeonToBounds` flag) are saved on the fi
 
 ---
 
+### Building Visibility Pipeline & Known Bugs
+
+Two separate bugs can cause buildings to be invisible while their collision boxes remain active. Both were found during this session and are fixed.
+
+#### Bug 1 — Stale KiriTile bounds after AttachDungeonToGround
+
+`KiriHLODManager.SetupKiriTiles` runs immediately after DunGen generates the dungeon. It caches each `KiriTile`'s world bounds and builds the `tileQuadTree` from those snapshots.
+
+However, `AttachDungeonToGround` runs *later* in the setup sequence, moving every tile to its final terrain-surface Y position. `SetupGlobalTileAndData` (which calls `RebuildNativeArray`) then queries the stale `tileQuadTree` with `GetIntersections(new Bounds(pos, Vector3.one))` to assign each `KiriHLODGroup` its `visibilityBitMask`. Because the QuadTree still holds pre-attachment positions, many buildings miss the 1×1×1 intersection test and receive `visibilityBitMask = 0`.
+
+**Fix — `KiriTileBoundsRefreshPatch` (Prefix on `SetupGlobalTileAndData`):** Re-calls `CacheQuadTreeCheckBounds()` on every `KiriTile` and rebuilds `tileQuadTree` immediately before `SetupGlobalTileAndData` reads from it. Gated by `EnableKiriTileBoundsRefresh` (default `true`).
+
+#### Bug 2 — Buildings outside any tile's 1×1×1 intersection box
+
+When `TilePlacementBounds` is scaled up, tiles spread over a larger XZ area. Some buildings land between tiles, so the 1×1×1 intersection query inside `RebuildNativeArray` returns empty for them even with fresh bounds. Those buildings also get `visibilityBitMask = 0`.
+
+**Fix — `HLODOrphanBuildingFixPatch` (Postfix on `SetupGlobalTileAndData`):** After `SetupGlobalTileAndData` runs, finds every `KiriHLODGroup` with `visibilityBitMask == 0` (and `outOfBounds == false`), locates the nearest tile via `GetClosetItemByEdge`, and assigns that tile's bit to both the component field and the corresponding `NativeArray` entry (`groupNativeArray[idx].visiblityBitMask`). Always runs unconditionally (no config gate).
+
+#### Bug 3 — MapVisibility PIP ray double-crossing concave polygon
+
+`MapVisibility.CreateMap` uses a point-in-polygon test to determine which tiles are mutually visible: it fires a `Vector3.forward * 1000f` ray from each tile corner and counts crossings against segments from `OutOfBounds2.CreateSegments` (doorway visibility lines only — not a world boundary circle).
+
+The visibility polygon is star-shaped but potentially **concave**: on maps with branching arms, scaling the ray from 1000 to 1500 units causes it to exit one arm and re-enter another, producing an **even** crossing count that marks the tile as "not visible." The building is then excluded from the HLOD render pass.
+
+**Fix:** Default `EnableMapVisibilityRayScale` to `false`. The 1000-unit constant is calibrated to the existing polygon geometry and is sufficient for multipliers up to approximately 3–4×. Only enable the scaling if buildings actually disappear at very large multipliers where 1000 units is genuinely too short.
+
+---
+
 ### Patch Reference
 
 #### DungeonGeneratorPatch
 
 **Target:** `DungeonGenerator.Generate` (Prefix)
 
-Applies three changes before each generation attempt:
+Applies changes before each generation attempt, each gated by its own config toggle:
 
-1. `LengthMultiplier = MapSizeMultiplier` — controls main-path room count.
-2. `MaxAttemptCount = MaxGenerationAttempts` — more retries for larger maps.
-3. `TilePlacementBounds.size *= MapSizeMultiplier` — scaled spatial budget (see above).
-4. For each `DungeonArchetype`, `BranchingDepth` and `BranchCount` are multiplied by `BranchMultiplier`. Archetype originals are saved on first call and restored from there on every retry, so retries always scale from the same baseline.
+1. `LengthMultiplier = MapSizeMultiplier` — controls main-path room count. (`EnableLengthScaling`)
+2. `MaxAttemptCount = MaxGenerationAttempts` — more retries for larger maps. (`EnableMaxAttemptsOverride`)
+3. `TilePlacementBounds.size *= MapSizeMultiplier` — scaled spatial budget. (`EnableTilePlacementBoundsScaling`)
+4. For each `DungeonArchetype`, `BranchingDepth` and `BranchCount` are multiplied by `BranchMultiplier`. (`EnableBranchScaling`)
+
+Archetype originals are saved on first call and restored from there on every retry, so retries always scale from the same baseline.
 
 All values are restored in `OnStatusChanged` (hooked to `DungeonGenerator.OnAnyDungeonGenerationStatusChanged`) when generation reaches `Complete` or `Failed`.
 
@@ -159,6 +236,8 @@ All values are restored in `OnStatusChanged` (hooked to `DungeonGenerator.OnAnyD
 #### NavMeshAsyncPatch
 
 **Target:** `NavMeshBakeOnDungeonFinish.DungeonGenerator_OnGenerationComplete` (Prefix, replaces method)
+
+**Gated by `EnableNavMeshAsync`.**
 
 The vanilla handler calls `navMeshSurface.BuildNavMesh()` synchronously inside an event callback, freezing the main thread for the entire bake. This patch replaces it with a coroutine:
 
@@ -178,7 +257,7 @@ All three NavMeshSurface members used (`navMeshData`, `AddData()`, `UpdateNavMes
 
 **Target:** `GiantessPathfinding.Setup` (Prefix, replaces the coroutine)
 
-**Gated by `EnableOptimizations`.**
+**Gated by `EnableGiantessPathfinding` (default `false`).**
 
 The vanilla `Setup` coroutine calls `GraphPathfinding.CreateCoroutine`, which calls `VisibilityPolygon.BreakIntersectionsSlow` with a LINQ iterator. The complexity is O(N³) because:
 
@@ -199,13 +278,13 @@ The replacement also adds `SetupStopwatch` yield points inside the deduplication
 
 #### MapVisibilityPatch
 
-**Target:** `MapVisibility.CreateMap` state machine `MoveNext` (Transpiler) + `KiriHLODManager.SetupGlobalTileAndData` (Postfix) + `EmptyGridFinder.GetEmptyCellCenters` (Prefix)
+**Target:** `MapVisibility.CreateMap` state machine `MoveNext` (Transpiler) + `EmptyGridFinder.GetEmptyCellCenters` (Prefix)
 
-Three patches in one file:
+Two patches in one file:
 
-**Patch 1 — PIP ray length (always active)**
+**Patch 1 — PIP ray length (gated by `EnableMapVisibilityRayScale`, default `false`)**
 
-`CreateMap` tests whether a tile's centroid is inside a visibility polygon using a point-in-polygon ray cast: `vector4 + Vector3.forward * 1000f`. On a scaled map the polygon is larger and the ray can terminate before exiting it, causing tiles to appear mutually invisible. The Transpiler replaces the `ldc.r4 1000` constant with a call to:
+`CreateMap` tests whether a tile's centroid is inside a visibility polygon using a point-in-polygon ray cast: `vector4 + Vector3.forward * 1000f`. On very large maps the polygon is larger and the ray can terminate before exiting it, causing tiles to appear mutually invisible. The Transpiler replaces the `ldc.r4 1000` constant with a call to:
 
 ```csharp
 public static float GetScaledRayLength() => 1000f * MapSizeMultiplier * 1.2f;
@@ -213,13 +292,27 @@ public static float GetScaledRayLength() => 1000f * MapSizeMultiplier * 1.2f;
 
 The transpiler targets the `CreateMap` state machine's `MoveNext` directly because `CreateMap` is an iterator method — its body lives in a compiler-generated nested type.
 
-**Patch 2 — Visibility distance cull (disabled by default)**
+**WARNING:** The 1000-unit constant is calibrated to the doorway-segment polygon geometry. Scaling it on small-to-medium maps causes the ray to exit and re-enter concave arms, producing even crossing counts that mark visible tiles as not visible. Default is `false`. Only enable for multipliers >3–4× where buildings actually disappear.
 
-After `SetupGlobalTileAndData` runs, iterates every tile's `visibleTiles` list and removes pairs whose centres are farther apart than `VisibilityMaxDistance`. Cuts the O(N²) `CreateMap` cost on large maps if a reasonable distance is set (e.g. 300–600 units). Default is `0` (disabled, vanilla behaviour).
-
-**Patch 3 — OOB grid cell size (gated by `EnableOptimizations`)**
+**Patch 2 — OOB grid cell size (gated by `EnableOOBGridScaling`, default `false`)**
 
 `EmptyGridFinder.GetEmptyCellCenters` places one ground collider per 60×60 unit cell outside the dungeon. At 1.5× world scale the grid spans (1152/60)² ≈ 369 cells vs 164 vanilla. Scaling `cellSize` by `MapSizeMultiplier` keeps the cell count constant at any multiplier, so loading time stays the same as vanilla.
+
+---
+
+#### KiriTileBoundsRefreshPatch
+
+**Target:** `KiriHLODManager.SetupGlobalTileAndData` (Prefix + Postfix)
+
+Two patches that fix the "invisible buildings with collision" bug. See [Building Visibility Pipeline & Known Bugs](#building-visibility-pipeline--known-bugs) for full analysis.
+
+**Prefix — `KiriTileBoundsRefreshPatch` (gated by `EnableKiriTileBoundsRefresh`, default `true`):**
+
+Re-calls `CacheQuadTreeCheckBounds()` on every `KiriTile` and rebuilds `tileQuadTree` after `AttachDungeonToGround` moves tiles to their final terrain-surface positions. This ensures `SetupGlobalTileAndData`'s `GetIntersections` queries use post-attachment world bounds.
+
+**Postfix — `HLODOrphanBuildingFixPatch` (always runs):**
+
+After `SetupGlobalTileAndData`, finds all `KiriHLODGroup` objects where `visibilityBitMask == 0` and `outOfBounds == false`. For each one, locates the nearest tile via `GetClosetItemByEdge(pos, float.MaxValue)` and assigns that tile's bit to both the component field and the NativeArray entry (`groupNativeArray[idx].visiblityBitMask`). Logs the count of reassigned buildings at `LogInfo` level.
 
 ---
 
@@ -239,7 +332,7 @@ Controlled by the `ScaleWorldBoundary` config key.
 
 **Target:** `GrassRenderer.ProcessGrass` (Prefix + Postfix + Transpiler)
 
-**Gated by `EnableOptimizations`.**
+**Gated by `EnableGrassReduction` (default `false`).**
 
 Two changes:
 
@@ -247,7 +340,7 @@ Two changes:
 
 2. **Physics.SyncTransforms removal (Transpiler):** `ProcessGrass` calls `Physics.SyncTransforms()` once per tile at the start. By the time grass is placed (after dungeon generation and terrain setup), transforms are stable. The call is a no-op in practice but still incurs a full physics-engine round-trip. The Transpiler replaces it with a `nop`.
 
-When `EnableOptimizations` is false, both the Transpiler and Prefix pass through unchanged.
+When `EnableGrassReduction` is false, both the Transpiler and Prefix pass through unchanged. Note: the transpiler checks the config at patch application time (startup) because transpilers cannot be reverted; disabling the config requires a restart.
 
 ---
 
@@ -255,7 +348,7 @@ When `EnableOptimizations` is false, both the Transpiler and Prefix pass through
 
 **Target:** `LootZoneManager.SetupZones` (Prefix/Postfix) + `NodeTags.SpawnPrefab` (Prefix)
 
-**Gated by `EnableOptimizations`.**
+**Gated by `EnableLootZoneDefer` (default `false`).**
 
 `SetupZones` is a synchronous method that fires `NodeTags.SpawnPrefab` for every non-selected loot node — on large maps this is many `Instantiate` + `ProcessLocalProps` calls in a single frame.
 
@@ -270,6 +363,8 @@ When enabled:
 
 **Target:** `TerrainPainterKiri.PaintTerrain` (Prefix) + `TerrainPainter.UpdateSplatMapDots` state machine (Transpiler)
 
+**Gated by `EnablePathPaintCache` (default `true`).**
+
 `UpdateSplatMapDots` calls `Object.FindObjectsOfType<PathPaint>()` once per terrain tile. `FindObjectsOfType` scans the entire scene hierarchy every call. On a large map with many tiles this is O(N_tiles × N_scene_objects).
 
 The `PathPaintCache` static class caches the `PathPaint[]` for the lifetime of a single `PaintTerrain` session. The Transpiler replaces `FindObjectsOfType<PathPaint>()` in the state machine with a call to `PathPaintCache.Get()`. The cache is invalidated at the start of each `PaintTerrain` call via the Prefix.
@@ -279,6 +374,8 @@ The `PathPaintCache` static class caches the `PathPaint[]` for the lifetime of a
 #### RetryLimitPatch
 
 **Target:** `DungeonGenerator.InnerGenerate` state machine + `GenerateBranchPaths` state machine (Transpiler)
+
+**Gated by `EnableRetryLimitFix` (default `true`).**
 
 DunGen has a retry-limit guard inside `InnerGenerate`:
 
@@ -308,32 +405,34 @@ Understanding the ordering is important for diagnosing timing-sensitive bugs:
 CreateDungeon
   └─ DungeonGenerator.Generate
        └─ OnGenerationComplete → NavMeshAsyncPatch (async bake starts)
-SetupKiriTiles          ← KiriTile.cachedMainBounds computed here
+SetupKiriTiles          ← KiriTile.cachedMainBounds snapshotted here (pre-attachment!)
 PlaceLootZones          ← LootZonePatch defers SpawnPrefab if enabled
 PlaceBuildings
+AttachDungeonToGround   ← tiles moved to final terrain-surface Y positions
 CalculateVisibility     ← MapVisibility.CreateMap runs (O(N²) ray casting)
 SettingUpGlobalHLOD     ← KiriHLODManager.SetupGlobalTileAndData
-                            builds NativeArrays + LinearQuadTree from cachedMainBounds
+                            ↳ KiriTileBoundsRefreshPatch (Prefix) — re-caches tile bounds
+                            ↳ RebuildNativeArray — assigns visibilityBitMask to each group
+                            ↳ HLODOrphanBuildingFixPatch (Postfix) — snaps orphaned buildings
 setup = true
 BakeGiantessPathfinding ← GiantessPathfindingPatch replaces this if enabled
 Player spawned
 ```
 
-The HLOD quad-tree (`kiriTileLinearQuadTree`) is built from `KiriTileDOTS.boundsMin/Max`, which come from `KiriTile.cachedMainBounds` (set in `SetupKiriTiles`). These are **world-space bounds computed after DunGen places the tiles**. If tiles are placed outside the giantess terrain area (the old `RestrictDungeonToBounds = false` bug), the quad-tree contains bounds that never overlap the camera position at ground level.
+The critical ordering issue: `SetupKiriTiles` snapshots tile bounds **before** `AttachDungeonToGround` moves tiles. Without `KiriTileBoundsRefreshPatch`, the QuadTree used by `RebuildNativeArray` holds stale positions, causing buildings to receive `visibilityBitMask = 0` and become invisible.
 
 ---
 
-### EnableOptimizations Flag
+### Config Sections Reference
 
-Four patches are gated behind `EnableOptimizations` (default `false`) because they trade some risk for faster loading:
+Config entries are grouped into four sections, each with a distinct purpose:
 
-| Patch | What it speeds up | Risk |
-|---|---|---|
-| `GiantessPathfindingPatch` | O(N²) path intersection on background thread | Behavioural changes to pathfinding graph |
-| `LootZonePatch` | Deferred loot spawning across frames | Loot visible slightly later; ordering differences |
-| `GrassPatch` | Grass density + SyncTransforms removal | Visual density reduction; SyncTransforms changes physics timing |
-| `OOBGridCellSizePatch` | Constant OOB collider cell count at any scale | Fewer, larger collider cells outside dungeon |
+**`[Map]` / `[Performance]`** — Core scaling values (multipliers, frame budget, generation attempts). These control the actual size and performance characteristics of the generated dungeon.
 
-The HLOD rendering fix (`TilePlacementBounds` scaling) is always active and does not depend on this flag. The navmesh async patch is also always active.
+**`[DungeonGen]`** — Individual on/off toggles for each dungeon generation behaviour. All default to `true`. Disabling individual entries lets you isolate which scaling step causes a problem. Note that `EnableTilePlacementBoundsScaling = false` will break building rendering at any multiplier above 1.0.
+
+**`[Optimizations]`** — Optional speed-ups that trade some risk for faster loading. All default to `false`. These are safe to try on large maps but may produce subtle visual or behavioural differences. They do not depend on each other, so each can be enabled independently.
+
+**`[Patches]`** — Bug fixes and correctness patches. Most default to `true` because the underlying bugs they fix are always present at any map scale. The exception is `EnableMapVisibilityRayScale` (default `false`) — see the warning above.
 
 </details>

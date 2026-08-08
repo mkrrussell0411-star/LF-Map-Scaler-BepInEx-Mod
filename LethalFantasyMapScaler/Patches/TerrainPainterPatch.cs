@@ -35,7 +35,11 @@ namespace LethalFantasyMapScaler.Patches
     [HarmonyPatch(typeof(TerrainPainterKiri), nameof(TerrainPainterKiri.PaintTerrain))]
     internal static class PathPaintCacheInvalidator
     {
-        static void Prefix() => PathPaintCache.Invalidate();
+        static void Prefix()
+        {
+            if (MapScalerConfig.EnablePathPaintCache.Value)
+                PathPaintCache.Invalidate();
+        }
     }
 
     // Transpile UpdateSplatMapDots state machine to call PathPaintCache.Get()
@@ -62,6 +66,12 @@ namespace LethalFantasyMapScaler.Patches
 
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
+            if (!MapScalerConfig.EnablePathPaintCache.Value)
+            {
+                foreach (var instr in instructions) yield return instr;
+                yield break;
+            }
+
             MethodInfo cacheGet = AccessTools.Method(typeof(PathPaintCache), nameof(PathPaintCache.Get));
             bool patched = false;
 

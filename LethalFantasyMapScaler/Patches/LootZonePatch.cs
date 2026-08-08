@@ -25,7 +25,7 @@ namespace LethalFantasyMapScaler.Patches
         {
             static void Prefix()
             {
-                if (!MapScalerConfig.EnableOptimizations.Value) return;
+                if (!MapScalerConfig.EnableLootZoneDefer.Value) return;
                 s_pending.Clear();
                 s_deferring = true;
             }
