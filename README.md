@@ -4,6 +4,40 @@ A [BepInEx 5](https://github.com/BepInEx/BepInEx) mod for **Lethal Fantasy Beta 
 
 ---
 
+## Changelog
+
+### v1.1.0 — 2026-08-08
+
+**Bug fixes:**
+- Fixed buildings that were invisible but had active collision boxes — caused by three separate issues in the HLOD pipeline:
+  - `KiriTile` world bounds were cached before `AttachDungeonToGround` moved tiles, so the QuadTree used stale positions when assigning `visibilityBitMask` to buildings (`KiriTileBoundsRefreshPatch`)
+  - Buildings that landed between tiles after `TilePlacementBounds` scaling missed the 1×1×1 intersection query and received `visibilityBitMask = 0`; a new postfix snaps them to their nearest tile (`HLODOrphanBuildingFixPatch`)
+  - Scaling the point-in-polygon ray in `MapVisibility.CreateMap` caused it to double-cross concave arms of the visibility polygon, marking visible tiles as hidden — `EnableMapVisibilityRayScale` now defaults to `false`
+- Fixed Harmony 2.x error (`TargetMethod() returned null`) by moving all config checks into transpiler bodies instead of returning null to skip patches
+
+**Config changes:**
+- Removed the single `EnableOptimizations` master switch
+- Added `[DungeonGen]` section with individual toggles for each generation behaviour (`EnableLengthScaling`, `EnableBranchScaling`, `EnableTilePlacementBoundsScaling`, `EnableMaxAttemptsOverride`, `EnableFrameBudgetOverride`) — all default `true`
+- Added `[Optimizations]` section with individual toggles for each speed-up (`EnableGiantessPathfinding`, `EnableLootZoneDefer`, `EnableGrassReduction`, `EnableOOBGridScaling`) — all default `false`
+- Added `[Patches]` section with individual toggles for each correctness fix (`EnableNavMeshAsync`, `EnableRetryLimitFix`, `EnablePathPaintCache`, `EnableKiriTileBoundsRefresh`, `EnableMapVisibilityRayScale`)
+
+> **Upgrading from v1.0.0:** delete your old config file (`BepInEx\config\com.author.lethalfantasymapscaler.cfg`) so the new sections are generated with correct defaults.
+
+---
+
+### v1.0.0 — initial release
+
+- Map size scaling via `DungeonGenerator.LengthMultiplier` and `TilePlacementBounds`
+- Branch scaling via `BranchingDepth` / `BranchCount` on each `DungeonArchetype`
+- Async NavMesh bake to avoid blocking the main thread
+- DunGen StackOverflow fix (`Application.isEditor` retry guard never fires in builds)
+- `PathPaint` scan caching in terrain painter
+- Out-of-bounds terrain boundary scaling (`ScaleWorldBoundary`)
+- Frame budget override for setup coroutines (`LoadingFrameBudgetMs`)
+- Optional optimizations: giantess pathfinding O(N²), loot deferral, grass density, OOB grid cell scaling
+
+---
+
 ## Requirements
 
 | Requirement | Version |
