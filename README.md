@@ -1,4 +1,4 @@
-#!!!IMPORTANT!!!!
+# !!!IMPORTANT!!!!
 So far this is heavily bugged and basically unusable at the current state and since life has got in the way it will be for the current time being.
 
 # LF Map Scaler — BepInEx Mod
