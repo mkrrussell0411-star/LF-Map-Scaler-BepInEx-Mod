@@ -1,3 +1,6 @@
+#!!!IMPORTANT!!!!
+So far this is heavily bugged and basically unusable at the current state and since life has got in the way it will be for the current time being.
+
 # LF Map Scaler — BepInEx Mod
 
 A [BepInEx 5](https://github.com/BepInEx/BepInEx) mod for **Lethal Fantasy Beta v0.1.3** that scales the procedurally generated dungeon to a configurable size multiplier, with supporting fixes to keep HLOD rendering, navmesh baking, pathfinding, terrain, and visibility working correctly at any scale.
